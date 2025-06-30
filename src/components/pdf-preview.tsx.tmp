@@ -1,0 +1,91 @@
+"use client";
+
+import React, { useEffect, useRef, useState } from 'react';
+import { loadPDF, renderPage } from '@/lib/pdf';
+import { PDFDocumentProxy } from 'pdfjs-dist/types/src/display/api';
+
+interface PDFPreviewProps {
+  pdfData: Uint8Array | null;
+}
+
+export function PDFPreview({ pdfData }: PDFPreviewProps) {
+  const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [renderedPages, setRenderedPages] = useState<React.ReactElement[]>([]);
+
+  // Load PDF document
+  useEffect(() => {
+    if (!pdfData) return;
+
+    const loadDocument = async () => {
+      setIsLoading(true);
+      setError(null);
+      setRenderedPages([]);
+
+      try {
+        const document = await loadPDF(pdfData);
+        setPdf(document);
+
+        // Render all pages
+        const pages: React.ReactElement[] = [];
+
+        for (let i = 1; i <= document.numPages; i++) {
+          const page = await document.getPage(i);
+          const canvas = await renderPage(page, 1.0);
+
+          pages.push(
+            <div key={i} className="flex justify-center">
+              <div className="bg-white shadow-lg rounded-lg p-4">
+                <div 
+                  className="canvas-container" 
+                  ref={(el: HTMLDivElement | null) => {
+                    if (el) {
+                      el.innerHTML = '';
+                      el.appendChild(canvas);
+                    }
+                  }}
+                />
+              </div>
+            </div>
+          );
+        }
+
+        setRenderedPages(pages);
+      } catch (err: unknown) {
+        console.error('Error loading PDF:', err);
+        setError(err instanceof Error ? err.message : 'Failed to load PDF');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadDocument();
+  }, [pdfData]);
+
+  return (
+    <div className="relative flex-1 overflow-auto" ref={containerRef}>
+      {/* Loading state */}
+      {isLoading && (
+        <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-75">
+          <div className="text-gray-500">Loading PDF...</div>
+        </div>
+      )}
+
+      {/* Error state */}
+      {error && (
+        <div className="p-4 text-red-500">
+          Error: {error}
+        </div>
+      )}
+
+      {/* PDF content */}
+      {!isLoading && !error && (
+        <div className="w-full max-w-[900px] mx-auto p-4 space-y-8">
+          {renderedPages}
+        </div>
+      )}
+    </div>
+  );
+}

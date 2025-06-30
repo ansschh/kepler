@@ -1,0 +1,74 @@
+'use client';
+
+import { type PDFDocumentProxy, type PDFPageProxy } from 'pdfjs-dist/types/src/display/api';
+
+let pdfjsLib: typeof import('pdfjs-dist');
+
+export const initPDFJS = async () => {
+  if (typeof window === 'undefined') return null;
+
+  if (!pdfjsLib) {
+    pdfjsLib = await import('pdfjs-dist');
+    if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+    }
+  }
+  return pdfjsLib;
+};
+
+export const loadPDF = async (pdfData: Uint8Array): Promise<PDFDocumentProxy> => {
+  const lib = await initPDFJS();
+  if (!lib) throw new Error('PDF.js not initialized');
+
+  if (!pdfData?.length) throw new Error('Invalid PDF data');
+
+  try {
+    const loadingTask = lib.getDocument(new Uint8Array(pdfData));
+    loadingTask.onProgress = ({ loaded, total }: { loaded: number; total: number }) => {
+      console.log(`Loading PDF: ${Math.round((loaded / total) * 100)}%`);
+    };
+    return await loadingTask.promise;
+  } catch (error) {
+    console.error('Error loading PDF:', error);
+    throw error;
+  }
+};
+
+export const renderPage = async (
+  page: PDFPageProxy,
+  scale: number = 1.0
+): Promise<HTMLCanvasElement> => {
+  // Calculate viewport at scale 1.0 first to get base dimensions
+  const baseViewport = page.getViewport({ scale: 1.0 });
+  
+  // Create canvas with base dimensions
+  const canvas = document.createElement('canvas');
+  canvas.width = baseViewport.width;
+  canvas.height = baseViewport.height;
+  
+  // Get context and check
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Could not get canvas context');
+
+  // Create scaled viewport for rendering
+  const viewport = page.getViewport({ scale });
+
+  try {
+    await page.render({
+      canvasContext: context,
+      viewport,
+    }).promise;
+    return canvas;
+  } catch (error) {
+    console.error('Error rendering page:', error);
+    throw error;
+  }
+};
+
+export const getPageDimensions = (page: PDFPageProxy, scale: number = 1.0) => {
+  const viewport = page.getViewport({ scale });
+  return {
+    width: viewport.width,
+    height: viewport.height
+  };
+};

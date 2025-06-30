@@ -1,0 +1,377 @@
+"use client";
+
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { loadPDF, renderPage } from '@/lib/pdf';
+import { Button } from '@/components/ui/button';
+import { type PDFDocumentProxy, type PDFPageProxy } from 'pdfjs-dist/types/src/display/api';
+
+interface PageInfo {
+  pageNumber: number;
+  canvas: HTMLCanvasElement;
+}
+
+type ZoomLevel = 0.5 | 0.75 | 1 | 1.25 | 1.5 | 2;
+
+interface PDFPreviewProps {
+  pdfData: Uint8Array | null;
+}
+
+export function PDFPreview({ pdfData }: PDFPreviewProps) {
+  // Document state
+  const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  
+  // View state
+  const [scale, setScale] = useState<ZoomLevel>(1);
+  const [pages, setPages] = useState<Map<number, PageInfo>>(new Map());
+  const [visiblePages, setVisiblePages] = useState<Set<number>>(new Set());
+  
+  // Refs
+  const containerRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+
+  // Helper function to ensure zoom level is valid
+  const clampZoom = useCallback((zoom: number): ZoomLevel => {
+    if (zoom <= 0.5) return 0.5;
+    if (zoom <= 0.75) return 0.75;
+    if (zoom <= 1) return 1;
+    if (zoom <= 1.25) return 1.25;
+    if (zoom <= 1.5) return 1.5;
+    return 2;
+  }, []);
+
+  // Load PDF document
+  useEffect(() => {
+    let mounted = true;
+    const loadDocument = async () => {
+      if (!pdfData) return;
+      setIsLoading(true);
+      setError(null);
+      try {
+        // Load the PDF document
+        const doc = await loadPDF(pdfData);
+        if (!mounted) return;
+        setPdf(doc);
+      } catch (err) {
+        console.error('Error loading PDF:', err);
+        setError(err instanceof Error ? err.message : 'Failed to load PDF');
+      } finally {
+        if (mounted) setIsLoading(false);
+      }
+    };
+
+    loadDocument();
+    return () => {
+      mounted = false;
+      setPdf(null);
+      setPages(new Map());
+    };
+  }, [pdfData]);
+
+  // Setup intersection observer for page visibility
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const newVisible = new Set<number>();
+        entries.forEach(entry => {
+          const pageNum = Number(entry.target.getAttribute('data-page'));
+          if (entry.isIntersecting) {
+            newVisible.add(pageNum);
+          }
+        });
+        setVisiblePages(newVisible);
+      },
+      {
+        root: containerRef.current,
+        rootMargin: '100px 0px',
+        threshold: 0.1
+      }
+    );
+
+    observerRef.current = observer;
+    return () => observer.disconnect();
+  }, []);
+
+  // Re-render pages when scale changes
+  useEffect(() => {
+    if (!pdf?.numPages) return;
+    // Render all pages
+    const currentPdf = pdf; // Capture current value to avoid null checks
+    for (let i = 1; i <= currentPdf.numPages; i++) {
+      renderPageToCanvas(currentPdf, i);
+    }
+  }, [scale, pdf]);
+
+  // Render visible pages
+  useEffect(() => {
+    if (!pdf || !containerRef.current || visiblePages.size === 0) return;
+
+    const renderPages = async () => {
+      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+        if (!pages.has(pageNum) && visiblePages.has(pageNum)) {
+          try {
+            const page = await pdf.getPage(pageNum);
+            const canvas = await renderPage(page, scale);
+            setPages(prev => new Map(prev).set(pageNum, {
+              pageNumber: pageNum,
+              canvas
+            }));
+          } catch (err) {
+            console.error(`Error rendering page ${pageNum}:`, err);
+          }
+        }
+      }
+    };
+
+    renderPages();
+  }, [pdf, scale, pages, visiblePages]);
+
+  // Handle scroll
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      if (!pdf) return;
+
+      const { scrollTop, clientHeight } = container;
+      const containerRect = container.getBoundingClientRect();
+
+      // Get all page elements and update visibility
+      const newVisible = new Set<number>();
+      pageRefs.current.forEach((element, pageNum) => {
+        const rect = element.getBoundingClientRect();
+        if (rect.bottom >= containerRect.top && rect.top <= containerRect.bottom) {
+          newVisible.add(pageNum);
+        }
+      });
+
+      setVisiblePages(newVisible);
+    };
+
+    container.addEventListener('scroll', handleScroll);
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [pdf]);
+
+  // Zoom controls
+  const zoomIn = useCallback(() => {
+    const newScale = clampZoom(scale + 0.25);
+    if (newScale !== scale) {
+      setScale(newScale as ZoomLevel);
+    }
+  }, [clampZoom, scale]);
+
+  const zoomOut = useCallback(() => {
+    const newScale = clampZoom(scale - 0.25);
+    if (newScale !== scale) {
+      setScale(newScale as ZoomLevel);
+    }
+  }, [clampZoom, scale]);
+
+  const resetZoom = useCallback(() => {
+    setScale(1 as ZoomLevel);
+  }, []);
+
+  // Handle wheel zoom
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+
+      // Get cursor position relative to the container
+      const rect = container.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      // Calculate point under cursor in document space
+      const scrollLeft = container.scrollLeft;
+      const scrollTop = container.scrollTop;
+      const zoomX = x + scrollLeft;
+      const zoomY = y + scrollTop;
+
+      // Calculate new scale with reduced sensitivity
+      const delta = e.deltaY > 0 ? -0.1 : 0.1;
+      const newScale = clampZoom(scale + delta);
+
+      // Only update if scale actually changed
+      if (newScale !== scale) {
+        const scaleChange = newScale / scale;
+        setScale(newScale);
+
+        // Adjust scroll position to keep zoom point steady
+        requestAnimationFrame(() => {
+          container.scrollTo({
+            left: zoomX * scaleChange - x,
+            top: zoomY * scaleChange - y,
+            behavior: 'instant'
+          });
+        });
+      }
+    };
+
+    container.addEventListener('wheel', handleWheel, { passive: false });
+    return () => container.removeEventListener('wheel', handleWheel);
+  }, [scale, clampZoom]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === '=' || (e.key === '+' && e.shiftKey)) {
+        e.preventDefault();
+        setScale(clampZoom(scale + 0.25));
+      } else if (e.key === '-' || e.key === '_') {
+        e.preventDefault();
+        setScale(clampZoom(scale - 0.25));
+      } else if (e.key === '0') {
+        e.preventDefault();
+        setScale(1);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [clampZoom, scale]);
+
+  const renderPageToCanvas = async (pdf: PDFDocumentProxy, pageNumber: number) => {
+    const container = containerRef.current;
+    if (!container) return;
+    
+    try {
+      const page = await pdf.getPage(pageNumber);
+      const canvas = await renderPage(page, scale);
+      canvas.style.width = '100%';
+      canvas.style.height = 'auto';
+      canvas.style.display = 'block';
+      canvas.dataset.pageNumber = pageNumber.toString();
+      
+      setPages(prev => {
+        const newPages = new Map(prev);
+        newPages.set(pageNumber, { pageNumber, canvas });
+        return newPages;
+      });
+    } catch (err) {
+      console.error(`Error rendering page ${pageNumber}:`, err);
+      setError(`Error rendering page ${pageNumber}`);
+    }
+  };
+
+  if (!pdfData) return null;
+
+  const sortedPages = Array.from(pages.entries()).sort(([a], [b]) => a - b);
+
+  return (
+    <div className="relative flex-1 overflow-hidden">
+      {/* PDF container */}
+      <div
+        ref={containerRef}
+        className="h-full w-full overflow-y-auto bg-[#f0f2f5] p-4"
+      >
+        {/* Content container */}
+        <div
+          ref={contentRef}
+          className="mx-auto flex max-w-[800px] flex-col items-center"
+        >
+          {/* Loading state */}
+          {isLoading && (
+            <div className="flex h-full w-full items-center justify-center">
+              <p>Loading PDF...</p>
+            </div>
+          )}
+
+          {/* Error state */}
+          {error && (
+            <div className="flex h-full w-full items-center justify-center">
+              <p className="text-red-500">{error}</p>
+            </div>
+          )}
+
+          {/* PDF pages */}
+          {pdf &&
+            Array.from({ length: pdf.numPages }, (_, i) => i + 1).map(
+              (pageNumber) => {
+                const pageInfo = pages.get(pageNumber);
+                const dimensions = pageInfo ? {
+                  width: pageInfo.canvas.width,
+                  height: pageInfo.canvas.height
+                } : null;
+
+                return (
+                  <div
+                    key={pageNumber}
+                    ref={(el) => {
+                      if (el) {
+                        pageRefs.current.set(pageNumber, el);
+                        if (observerRef.current) {
+                          observerRef.current.observe(el);
+                        }
+                      }
+                    }}
+                    data-page={pageNumber}
+                    className="relative w-full mb-4 last:mb-0"
+                    style={dimensions ? {
+                      height: dimensions.height,
+                      width: dimensions.width,
+                      maxWidth: '100%',
+                      margin: '0 auto',
+                      backgroundColor: 'white',
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.08)',
+                      borderRadius: '2px'
+                    } : undefined}
+                  >
+                    {pageInfo && (
+                      <div 
+                        ref={(el) => {
+                          if (el) {
+                            el.innerHTML = '';
+                            el.appendChild(pageInfo.canvas);
+                          }
+                        }}
+                        className="absolute left-1/2 top-0 -translate-x-1/2"
+                      />
+                    )}
+                  </div>
+                );
+              }
+            )}
+        </div>
+      </div>
+
+      {/* Zoom controls */}
+      <div className="absolute bottom-4 right-4 flex items-center gap-2 rounded-lg bg-white p-2 shadow-lg">
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={zoomOut}
+          disabled={scale <= 0.5}
+          title="Zoom Out (Ctrl+-)"
+        >
+          -
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={resetZoom}
+          title="Reset Zoom (Ctrl+0)"
+        >
+          {Math.round(scale * 100)}%
+        </Button>
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={zoomIn}
+          disabled={scale >= 2}
+          title="Zoom In (Ctrl++)"
+        >
+          +
+        </Button>
+      </div>
+    </div>
+  );
+}
