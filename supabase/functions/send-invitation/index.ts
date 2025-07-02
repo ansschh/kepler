@@ -148,7 +148,9 @@ Deno.serve(async (req) => {
           document_id: documentId,
           permission: permission,
           invited_by: invitedBy,
-          document_title: documentTitle
+          document_title: documentTitle,
+          // Add the redirect URL to the metadata so it can be accessed in the email template
+          redirectUrl: `${Deno.env.get('SITE_URL')}/documents/${documentId}`
         },
         redirectTo: `${Deno.env.get('SITE_URL')}/documents/${documentId}`
       });

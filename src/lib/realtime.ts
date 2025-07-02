@@ -260,7 +260,7 @@ export class RealtimeService {
   }
 
   // Helper method to share a document with another user
-  static async shareDocument(documentId: string, email: string, permission: 'view' | 'edit' = 'edit'): Promise<void> {
+  static async shareDocument(documentId: string, email: string, permission: 'view' | 'edit' = 'edit', resend: boolean = false): Promise<void> {
     try {
       console.log(`Attempting to share document ${documentId} with ${email}...`);
       
@@ -286,7 +286,7 @@ export class RealtimeService {
         .eq('status', 'accepted')
         .single();
 
-      if (existingCollaborator) {
+      if (existingCollaborator && !resend) {
         throw new Error('User has already accepted collaboration on this document');
       }
 
@@ -329,43 +329,26 @@ export class RealtimeService {
         // Don't throw here, we can still proceed with a generic title
       }
 
-      // Send invitation email using Edge Function
-      const response = await fetch(
-        `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/send-invitation`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`
-          },
-          body: JSON.stringify({
-            documentId,
-            email,
-            documentTitle: document?.title || 'Untitled Document',
-            invitedBy: user.email
-          })
+      // Use Supabase functions.invoke instead of direct fetch to avoid CORS issues
+      const { data, error } = await supabase.functions.invoke('send-invitation', {
+        body: {
+          documentId,
+          email,
+          documentTitle: document?.title || 'Untitled Document',
+          invitedBy: user.email,
+          permission,
+          resend
         }
-      );
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Edge Function error response:', {
-          status: response.status,
-          statusText: response.statusText,
-          body: errorText
-        });
-        
-        // Even if email fails, the sharing is still set up
-        console.warn('Document shared but invitation email failed to send');
-        
-        try {
-          const error = JSON.parse(errorText);
-          throw new Error(error.message || 'Shared successfully but failed to send invitation email');
-        } catch (e) {
-          throw new Error(`Shared successfully but failed to send invitation email: ${response.statusText}`);
-        }
+      });
+      
+      if (error) {
+        console.error('Error invoking send-invitation function:', error);
+        throw new Error(`Failed to send invitation: ${error.message}`);
       }
 
+      // Trigger a database change that will be picked up by realtime subscriptions
+      // The collaborator was already added to the database above, so clients will receive the update
+      // through their postgres_changes subscription
       console.log(`Document shared with ${email} and invitation email sent`);
     } catch (error) {
       console.error('Error in shareDocument:', error);

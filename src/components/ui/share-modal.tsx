@@ -1,15 +1,18 @@
 "use client";
 
+import * as React from 'react';
 import { useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './dialog';
 import { Button } from './button';
 import { Input } from './input';
 import { Label } from './label';
 import { toast } from './use-toast';
-import { RealtimeService } from '@/lib/realtime';
+import { RealtimeService, Collaborator } from '@/lib/realtime';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './select';
 import { supabase } from '@/lib/supabase';
-import { Loader2, Trash2 } from "lucide-react";
+import { AlertCircle, Loader2, Trash2 } from "lucide-react";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
 interface ShareModalProps {
   isOpen: boolean;
@@ -25,6 +28,42 @@ interface PendingInvite {
   status: 'pending' | 'accepted';
 }
 
+// Component for the confirmation dialog rendered completely separately
+function RemoveCollaboratorDialog({ 
+  email, 
+  isOpen, 
+  onClose, 
+  onConfirm 
+}: { 
+  email: string | null, 
+  isOpen: boolean, 
+  onClose: () => void, 
+  onConfirm: (email: string) => void 
+}) {
+  return (
+    <AlertDialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Remove Collaborator</AlertDialogTitle>
+          <AlertDialogDescription>
+            Are you sure you want to remove {email} from this document?
+            This will revoke their access immediately.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction 
+            className="!bg-destructive !text-destructive-foreground hover:!bg-destructive/90 !ring-offset-background !focus:ring-2 !focus:ring-destructive !focus:ring-offset-2"
+            onClick={() => email && onConfirm(email)}
+          >
+            Remove
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 export function ShareModal({ isOpen, onClose, documentId, documentTitle }: ShareModalProps) {
   const [email, setEmail] = useState('');
   const [permission, setPermission] = useState<'view' | 'edit'>('edit');
@@ -32,6 +71,7 @@ export function ShareModal({ isOpen, onClose, documentId, documentTitle }: Share
   const [removingEmail, setRemovingEmail] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingInvites, setPendingInvites] = useState<PendingInvite[]>([]);
+  const [confirmRemoveEmail, setConfirmRemoveEmail] = useState<string | null>(null);
 
   // Fetch pending invites function with error handling and retry logic
   const fetchPendingInvites = useCallback(async () => {
@@ -118,8 +158,16 @@ export function ShareModal({ isOpen, onClose, documentId, documentTitle }: Share
         title: "Invitation sent",
         description: `An invitation has been sent to ${email}`,
       });
+      
+      // Manually add the new invite to the list immediately while waiting for real-time
+      const newInvite: PendingInvite = {
+        email: email,
+        permission: permission,
+        status: 'pending',
+        created_at: new Date().toISOString()
+      };
+      setPendingInvites(prev => [newInvite, ...prev]);
       setEmail('');
-      // No need to manually refresh - real-time will handle it
     } catch (error) {
       toast({
         title: "Failed to share",
@@ -139,7 +187,9 @@ export function ShareModal({ isOpen, onClose, documentId, documentTitle }: Share
         title: "Collaborator removed",
         description: `${inviteEmail} has been removed from the document`,
       });
-      // No need to manually refresh - real-time will handle it
+      
+      // Manually update the UI immediately while waiting for real-time
+      setPendingInvites(prev => prev.filter(invite => invite.email !== inviteEmail));
     } catch (error) {
       toast({
         title: "Failed to remove collaborator",
@@ -148,6 +198,7 @@ export function ShareModal({ isOpen, onClose, documentId, documentTitle }: Share
       });
     } finally {
       setRemovingEmail('');
+      setConfirmRemoveEmail(null);
     }
   };
 
@@ -202,55 +253,112 @@ export function ShareModal({ isOpen, onClose, documentId, documentTitle }: Share
     }
   };
 
+  // Create a separate form ref to handle validation manually
+  const formRef = React.useRef<HTMLFormElement>(null);
+  
+  // Function to validate the form manually
+  const validateForm = () => {
+    if (!email.trim()) {
+      return false;
+    }
+    return true;
+  };
+
+  // Modified handleShare to use manual validation
+  const handleShareWithValidation = (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    // Only proceed if validation passes
+    if (validateForm()) {
+      handleShare(e);
+    } else {
+      // Show custom validation message
+      toast({
+        title: "Email Required",
+        description: "Please enter a valid email address",
+        variant: "destructive",
+      });
+    }
+  };
+  
+  // State to control the remove dialog separately from the main form
+  const [removeDialogOpen, setRemoveDialogOpen] = React.useState(false);
+
+  // Handle remove button click without triggering form validation
+  const handleRemoveClick = (email: string) => {
+    // Set the email to remove and open the dialog
+    setConfirmRemoveEmail(email);
+    setRemoveDialogOpen(true);
+  };
+
+  // Handle confirmation of removal
+  const handleConfirmRemove = (email: string) => {
+    handleRemoveCollaborator(email);
+    setRemoveDialogOpen(false);
+  };
+
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-[600px]">
-        <DialogHeader>
-          <DialogTitle>Share Document</DialogTitle>
-          <DialogDescription>
-            {documentTitle ? `Share "${documentTitle}" with others` : 'Share this document with others'}
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      {/* Completely separate remove dialog component */}
+      <RemoveCollaboratorDialog
+        email={confirmRemoveEmail}
+        isOpen={removeDialogOpen}
+        onClose={() => {
+          setRemoveDialogOpen(false);
+          setConfirmRemoveEmail(null);
+        }}
+        onConfirm={handleConfirmRemove}
+      />
+      
+      <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+        <DialogContent className="sm:max-w-[600px]">
+          <DialogHeader>
+            <DialogTitle>Share Document</DialogTitle>
+            <DialogDescription>
+              {documentTitle ? `Share "${documentTitle}" with others` : 'Share this document with others'}
+            </DialogDescription>
+          </DialogHeader>
 
-        <form onSubmit={handleShare} className="grid gap-4 py-4">
-          <div className="grid gap-4">
-            <div className="grid grid-cols-[2fr,1fr] gap-2">
-              <div>
-                <Label htmlFor="email">Email address</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="Enter recipient's email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                />
+          <form ref={formRef} onSubmit={handleShareWithValidation} className="grid gap-4 py-4" noValidate>
+            <div className="grid gap-4">
+              <div className="grid grid-cols-[2fr,1fr] gap-2">
+                <div>
+                  <Label htmlFor="email">Email address</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder="Enter recipient's email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    // Remove HTML5 validation to use our custom validation
+                    required={false}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="permission">Permission</Label>
+                  <Select value={permission} onValueChange={(value: any) => setPermission(value)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select permission" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="edit">Editor</SelectItem>
+                      <SelectItem value="view">Viewer</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
-              <div>
-                <Label htmlFor="permission">Permission</Label>
-                <Select value={permission} onValueChange={(value: any) => setPermission(value)}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select permission" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="edit">Editor</SelectItem>
-                    <SelectItem value="view">Viewer</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+
+              <Button type="submit" disabled={isSubmitting} className="w-full">
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Sending...
+                  </>
+                ) : (
+                  'Send Invitation'
+                )}
+              </Button>
             </div>
-
-            <Button type="submit" disabled={isSubmitting} className="w-full">
-              {isSubmitting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Sending...
-                </>
-              ) : (
-                'Send Invitation'
-              )}
-            </Button>
-          </div>
 
           {pendingInvites.length > 0 && (
             <div className="mt-6">
@@ -297,8 +405,9 @@ export function ShareModal({ isOpen, onClose, documentId, documentTitle }: Share
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 transition-colors hover:bg-destructive/10 focus-visible:ring-destructive group"
-                          onClick={() => handleRemoveCollaborator(invite.email)}
+                          onClick={() => handleRemoveClick(invite.email)}
                           disabled={resendingTo === invite.email || removingEmail === invite.email}
+                          type="button" // Explicitly set type to button to prevent form submission
                         >
                           {removingEmail === invite.email ? (
                             <Loader2 className="h-4 w-4 animate-spin text-destructive" />
@@ -320,7 +429,10 @@ export function ShareModal({ isOpen, onClose, documentId, documentTitle }: Share
             Close
           </Button>
         </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </DialogContent>
+      </Dialog>
+
+      {/* Removed the portal-based dialog as we now use a completely separate component */}
+    </>
   );
 }
