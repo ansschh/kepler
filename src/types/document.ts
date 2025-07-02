@@ -2,9 +2,19 @@ export interface Document {
   id: string;
   content: string;
   title: string;
-  userId: string;
+  owner_id: string;
   created_at: string;
   updated_at: string;
+  collaborators?: DocumentCollaborator[];
+}
+
+export interface DocumentCollaborator {
+  document_id: string;
+  email: string;
+  permission: 'view' | 'edit';
+  status: 'pending' | 'accepted';
+  user_id?: string;
+  created_at: string;
 }
 
 export interface DocumentUpdate {

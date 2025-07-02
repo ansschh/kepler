@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.6;
+      color: #374151;
+      padding: 20px;
+    }
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+      background-color: #ffffff;
+      border-radius: 8px;
+      padding: 32px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+    .button {
+      display: inline-block;
+      padding: 12px 24px;
+      background-color: #4F46E5;
+      color: white;
+      text-decoration: none;
+      border-radius: 6px;
+      font-weight: 500;
+      margin: 16px 0;
+    }
+    .button:hover {
+      background-color: #4338CA;
+    }
+    .footer {
+      margin-top: 32px;
+      padding-top: 16px;
+      border-top: 1px solid #E5E7EB;
+      font-size: 14px;
+      color: #6B7280;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>You've been invited to collaborate!</h2>
+    <p>Hello,</p>
+    <p>{{ .invitedBy }} has invited you to collaborate on "{{ .documentTitle }}" in Kepler.</p>
+    <p>Click the button below to access the document:</p>
+    <a href="{{ .magicLink }}" class="button">Open Document</a>
+    <p>If you don't have an account yet, one will be created for you automatically when you click the link.</p>
+    <div class="footer">
+      <p>Best regards,<br>The Kepler Team</p>
+      <p>If you didn't request this invitation, you can safely ignore this email.</p>
+    </div>
+  </div>
+</body>
+</html>

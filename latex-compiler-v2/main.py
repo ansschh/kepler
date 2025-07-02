@@ -96,7 +96,7 @@ class LatexCompiler:
         except Exception as e:
             raise CompilationError(f"Failed to write LaTeX file: {str(e)}")
 
-    async def run_pdflatex(self) -> tuple[str, str, int]:
+    async def run_pdflatex(self) -> tuple[str, str, int | None]:
         """Run pdflatex with proper error handling"""
         try:
             process = await asyncio.create_subprocess_exec(

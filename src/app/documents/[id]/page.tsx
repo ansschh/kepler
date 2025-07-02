@@ -18,6 +18,7 @@ import { compileLatex } from '@/lib/latex-compiler';
 import { useParams } from 'next/navigation';
 import { toast } from "@/components/ui/use-toast";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { ShareModal } from '@/components/ui/share-modal';
 import { AlertCircle } from 'lucide-react';
 
 export default function SharedDocument() {
@@ -251,11 +252,8 @@ export default function SharedDocument() {
   }, [latex, toast]);
 
   const handleShare = useCallback(() => {
-    // Create a shareable link
-    const shareUrl = `${window.location.origin}/documents/${documentId}`;
-    navigator.clipboard.writeText(shareUrl);
-    // TODO: Add a toast notification to show the link was copied
-  }, [documentId]);
+    setIsShareModalOpen(true);
+  }, []);
 
   if (isLoading) {
     return (
@@ -427,7 +425,13 @@ export default function SharedDocument() {
         </ResizablePanelGroup>
       </main>
 
-
+      {/* Share Modal */}
+      <ShareModal
+        isOpen={isShareModalOpen}
+        onClose={() => setIsShareModalOpen(false)}
+        documentId={documentId}
+        documentTitle={selectedFileId === 'root-1' ? 'Main Document' : undefined}
+      />
     </div>
   );
 }

@@ -12,13 +12,14 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   },
   realtime: {
     params: {
-      eventsPerSecond: 2  // Reduce event rate to prevent timeouts
+      eventsPerSecond: 10
     },
-    timeout: 20000  // Increase timeout to 20 seconds
+    timeout: 60000  // Increase timeout to 60 seconds
   },
   global: {
     headers: {
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
     }
   }
 })
