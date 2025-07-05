@@ -13,6 +13,14 @@ export interface Collaborator {
 export class RealtimeService {
   private channel: RealtimeChannel | null = null;
   private documentId: string | null = null;
+  private maxRetries = 5;
+  private retryCount = 0;
+  private retryTimeout: NodeJS.Timeout | null = null;
+  private isConnecting = false;
+  private pollInterval: NodeJS.Timeout | null = null;
+  private lastFetchedContent: string | null = null;
+  private usePolling = false; // Will be set to true if realtime fails
+  private _lastReconnectTime = 0; // Track last reconnect time to prevent too frequent reconnections
 
   constructor(
     private onUpdate: (update: DocumentUpdate) => void,
@@ -26,37 +34,143 @@ export class RealtimeService {
     }
 
     this.documentId = documentId;
-    this.channel = supabase.channel(`document:${documentId}`);
+    this.retryCount = 0;
+    await this.connectToChannel();
+  }
 
-    this.channel
-      .on('broadcast', { event: 'document_update' }, ({ payload }) => {
-        try {
-          const update = payload as DocumentUpdate;
-          this.onUpdate(update);
-        } catch (error) {
-          this.onError(error instanceof Error ? error : new Error('Unknown error'));
+  private async connectToChannel() {
+    if (!this.documentId || this.isConnecting) return;
+    
+    try {
+      this.isConnecting = true;
+      console.log(`Connecting to document channel: ${this.documentId} (attempt ${this.retryCount + 1})`);
+      
+      // Clear any existing retry timeouts
+      if (this.retryTimeout) {
+        clearTimeout(this.retryTimeout);
+        this.retryTimeout = null;
+      }
+      
+      this.channel = supabase.channel(`document:${this.documentId}`);
+
+      // Set up status change handlers to detect disconnection
+      this.channel.on('system', { event: 'disconnect' }, (payload) => {
+        // Check if this is a PostgreSQL subscription confirmation message (which should NOT trigger disconnection)
+        if (payload && typeof payload === 'object' && 
+            'message' in payload && payload.message === 'Subscribed to PostgreSQL' &&
+            'status' in payload && payload.status === 'ok') {
+          console.log('Received PostgreSQL subscription confirmation (not a real disconnect):', JSON.stringify(payload));
+          // This is not a real disconnection, so don't handle it as one
+          return;
         }
-      })
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'document_collaborators',
-          filter: `document_id=eq.${documentId}`
-        },
-        async () => {
-          if (this.onCollaboratorUpdate) {
-            try {
-              const collaborators = await RealtimeService.getCollaborators(documentId);
-              this.onCollaboratorUpdate(collaborators);
-            } catch (error) {
-              this.onError(error instanceof Error ? error : new Error('Failed to fetch updated collaborators'));
+        
+        console.log('Disconnected from Supabase realtime:', JSON.stringify(payload));
+        this.handleDisconnection();
+      });
+
+      this.channel.on('system', { event: 'error' }, (payload) => {
+        // Check if this is a PostgreSQL subscription confirmation message (which is not an actual error)
+        if (payload && typeof payload === 'object' && 
+            'message' in payload && payload.message === 'Subscribed to PostgreSQL' &&
+            'status' in payload && payload.status === 'ok') {
+          console.log('Received PostgreSQL subscription confirmation (not an error):', JSON.stringify(payload));
+          // This is not a real error, so don't handle it as one
+          return;
+        }
+        
+        console.error('Detailed Supabase realtime error:', JSON.stringify(payload));
+        this.handleDisconnection();
+      });
+      
+      // Add more granular event listeners for better diagnostics
+      this.channel.on('system', { event: '*' }, (payload: any) => {
+        console.log(`Supabase system event:`, JSON.stringify(payload));
+      });
+
+      // Set up our application-specific handlers
+      this.channel
+        .on('broadcast', { event: 'document_update' }, ({ payload }) => {
+          try {
+                  // Safely parse payload as DocumentUpdate
+            const update = payload as DocumentUpdate;
+            this.onUpdate(update);
+          } catch (error) {
+            this.onError(error instanceof Error ? error : new Error('Unknown error'));
+          }
+        })
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'document_collaborators',
+            filter: `document_id=eq.${this.documentId}`
+          },
+          async () => {
+            if (this.onCollaboratorUpdate && this.documentId) {
+              try {
+                const collaborators = await RealtimeService.getCollaborators(this.documentId);
+                this.onCollaboratorUpdate(collaborators);
+              } catch (error) {
+                this.onError(error instanceof Error ? error : new Error('Failed to fetch updated collaborators'));
+              }
             }
           }
+        );
+
+      // Subscribe with retries
+      const status = await this.channel.subscribe(async (status) => {
+        console.log(`Supabase channel status: ${status}`);
+        
+        if (status === 'SUBSCRIBED') {
+          console.log('Successfully subscribed to document channel');
+          this.retryCount = 0;
+          this.isConnecting = false;
+        } else if (status === 'TIMED_OUT' || status === 'CHANNEL_ERROR') {
+          console.error(`Subscription status error: ${status}`);
+          this.handleDisconnection();
         }
-      )
-      .subscribe();
+      });
+      
+      this.isConnecting = false;
+      console.log('Channel subscription initiated with status:', status);
+    } catch (error) {
+      console.error('Error connecting to channel:', error);
+      this.isConnecting = false;
+      this.handleDisconnection();
+    }
+  }
+
+  private handleDisconnection() {
+    if (this.retryCount >= this.maxRetries) {
+      console.error(`Failed to connect after ${this.maxRetries} attempts. Switching to polling mode.`);
+      this.onError(new Error(`Could not connect to realtime service after ${this.maxRetries} attempts. Switched to polling mode.`));
+      
+      // Switch to polling mode
+      this.usePolling = true;
+      this.startPolling();
+      return;
+    }
+    
+    // Throttle reconnection attempts if they're happening too quickly
+    const now = Date.now();
+    if (this._lastReconnectTime && now - this._lastReconnectTime < 30000) {
+      console.log('Too many reconnection attempts in a short period, waiting longer');
+      this.retryCount = Math.min(this.retryCount + 2, this.maxRetries - 1); // Skip some backoff steps but ensure at least one retry
+    }
+    this._lastReconnectTime = now;
+    
+    // Exponential backoff: 1s, 2s, 4s, 8s, 16s
+    const delay = Math.min(1000 * Math.pow(2, this.retryCount), 30000);
+    this.retryCount++;
+    
+    console.log(`Reconnecting in ${delay}ms (attempt ${this.retryCount}/${this.maxRetries})`);
+    
+    this.retryTimeout = setTimeout(() => {
+      if (this.documentId) {
+        this.connectToChannel();
+      }
+    }, delay);
   }
 
   async sendUpdate(update: DocumentUpdate) {
@@ -65,22 +179,50 @@ export class RealtimeService {
     }
 
     try {
+      // Don't send updates if we're in polling mode
+      if (this.usePolling) {
+        console.log('In polling mode - skipping realtime update send');
+        return;
+      }
+
       await this.channel.send({
         type: 'broadcast',
         event: 'document_update',
         payload: update,
       });
     } catch (error) {
+      console.error('Error sending update:', error);
       this.onError(error instanceof Error ? error : new Error('Failed to send update'));
     }
   }
 
   async leaveDocument() {
+    // Clear any pending reconnection attempts
+    if (this.retryTimeout) {
+      clearTimeout(this.retryTimeout);
+      this.retryTimeout = null;
+    }
+    
+    // Clear polling interval if active
+    if (this.pollInterval) {
+      clearInterval(this.pollInterval);
+      this.pollInterval = null;
+    }
+    
     if (this.channel) {
-      await this.channel.unsubscribe();
+      try {
+        await this.channel.unsubscribe();
+      } catch (error) {
+        console.error('Error unsubscribing from channel:', error);
+      }
       this.channel = null;
       this.documentId = null;
     }
+    
+    this.retryCount = 0;
+    this.isConnecting = false;
+    this.usePolling = false;
+    this.lastFetchedContent = null;
   }
 
   // Helper method to create a new document
@@ -114,6 +256,57 @@ export class RealtimeService {
     if (!data) throw new Error('Failed to create document');
 
     return data as Document;
+  }
+
+  private async startPolling() {
+    if (!this.documentId || this.pollInterval) return;
+    
+    // Log more diagnostic information about the switch to polling
+    console.info(`Switching to polling mode for document ${this.documentId}. Realtime connection unsuccessful after ${this.maxRetries} attempts.`);
+    
+    console.log('Starting polling fallback mode for realtime updates');
+    
+    // Initialize with current document content
+    try {
+      const doc = await RealtimeService.getDocument(this.documentId);
+      this.lastFetchedContent = doc.content;
+    } catch (error) {
+      console.error('Failed to initialize polling with current content:', error);
+    }
+    
+    // Poll every 3 seconds
+    this.pollInterval = setInterval(async () => {
+      if (!this.documentId) return;
+      
+      try {
+        const doc = await RealtimeService.getDocument(this.documentId);
+        
+        // Check if content has changed
+        if (doc.content !== this.lastFetchedContent) {
+          console.log('Polling detected document change');
+          
+          // Send a simple update that replaces the entire content
+          // This is less efficient than diffing but simpler for fallback mode
+          const update: DocumentUpdate = {
+            type: 'replace',
+            from: 0,
+            to: this.lastFetchedContent ? this.lastFetchedContent.length : 0,
+            text: doc.content || '',
+          };
+          
+          this.lastFetchedContent = doc.content;
+          this.onUpdate(update);
+        }
+        
+        // Check if collaborators have changed and notify if needed
+        if (this.onCollaboratorUpdate) {
+          const collaborators = await RealtimeService.getCollaborators(this.documentId);
+          this.onCollaboratorUpdate(collaborators);
+        }
+      } catch (error) {
+        console.error('Error in polling update:', error);
+      }
+    }, 3000); // Poll every 3 seconds
   }
 
   // Helper method to get a document

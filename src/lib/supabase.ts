@@ -12,9 +12,10 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   },
   realtime: {
     params: {
-      eventsPerSecond: 10
+      eventsPerSecond: 5,  // Reduced from 10 to lower request rate
+      heartbeatIntervalMs: 4000  // Add heartbeat to detect connection health
     },
-    timeout: 60000  // Increase timeout to 60 seconds
+    timeout: 120000  // Increase timeout to 120 seconds
   },
   global: {
     headers: {

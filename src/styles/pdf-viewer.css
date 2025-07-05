@@ -1,0 +1,262 @@
+.pdf-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #fff;
+  overflow: hidden;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+}
+
+.pdf-viewer-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.25rem 0.5rem;
+  background: #fafafa;
+  border-bottom: 1px solid #e0e0e0;
+  min-height: 36px;
+  gap: 0.5rem;
+}
+
+.pdf-viewer-left,
+.pdf-viewer-right {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.pdf-viewer-page-select {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0.5rem;
+}
+
+.pdf-viewer-page-select input {
+  width: 3rem;
+  height: 1.75rem;
+  padding: 0 0.25rem;
+  text-align: center;
+  border: 1px solid #e0e0e0;
+  border-radius: 2px;
+  font-size: 0.875rem;
+  background: #fff;
+  color: #333;
+}
+
+.pdf-viewer-page-select input:focus {
+  outline: none;
+  border-color: #2196f3;
+  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.1);
+}
+
+.pdf-viewer-page-select span {
+  color: #666;
+  font-size: 0.875rem;
+}
+
+.pdf-viewer-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2rem;
+  height: 1.75rem;
+  padding: 0 0.5rem;
+  font-size: 0.875rem;
+  color: #4f4f4f;
+  background: #fafafa;
+  border: 1px solid #e0e0e0;
+  border-radius: 2px;
+  transition: all 0.15s ease;
+  cursor: pointer;
+  user-select: none;
+}
+
+.pdf-viewer-button:hover:not(:disabled) {
+  background-color: #f0f0f0;
+  border-color: #ccc;
+}
+
+.pdf-viewer-button:active:not(:disabled) {
+  background-color: #e8e8e8;
+  border-color: #bbb;
+}
+
+.pdf-viewer-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.pdf-viewer-button span {
+  display: inline-block;
+  line-height: 1;
+}
+
+.pdf-viewer-content {
+  flex: 1;
+  overflow-y: auto;
+  background: #f8f9fa;
+  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2rem;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+  scroll-behavior: smooth;
+}
+
+.pdf-viewer-content::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.pdf-viewer-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.pdf-viewer-content::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.2);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.pdf-viewer-content::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0, 0, 0, 0.3);
+}
+
+.pdf-viewer-page {
+  max-width: 100%;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  border-radius: 2px;
+  background: #fff;
+  user-select: text;
+  margin-bottom: 2rem;
+  position: relative;
+}
+
+.pdf-viewer-page:last-child {
+  margin-bottom: 0;
+}
+
+.pdf-viewer-page::before {
+  content: attr(data-page-number);
+  position: absolute;
+  top: -1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.75rem;
+  color: #666;
+  padding: 0.25rem 0.75rem;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 9999px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.pdf-viewer-page canvas {
+  margin: 0 auto;
+}
+
+.pdf-viewer-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  color: #666;
+  font-size: 0.875rem;
+}
+
+.pdf-viewer-loading-spinner {
+  width: 1.5rem;
+  height: 1.5rem;
+  margin-bottom: 0.5rem;
+  border: 2px solid #e0e0e0;
+  border-top-color: #2196f3;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.pdf-viewer-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  color: #d32f2f;
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+/* Text layer styles */
+.react-pdf__Page__textContent {
+  border: none !important;
+  background: transparent !important;
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  line-height: 1;
+  pointer-events: all;
+}
+
+.react-pdf__Page__textContent span {
+  color: transparent !important;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+.react-pdf__Page__textContent ::selection {
+  background: rgba(37, 99, 235, 0.3) !important;
+}
+
+.react-pdf__Page__textContent span::selection {
+  color: transparent !important;
+}
+
+/* Ensure text layer is above canvas but below annotations */
+.react-pdf__Page {
+  position: relative;
+}
+
+.react-pdf__Page__textContent {
+  z-index: 1;
+}
+
+.react-pdf__Page__annotations.annotationLayer {
+  z-index: 2;
+}
+
+/* Annotation layer styles */
+.react-pdf__Page__annotations {
+  padding: 0 !important;
+}
+
+.react-pdf__Page__annotations.annotationLayer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+}
+
+.react-pdf__Page__annotations.annotationLayer a {
+  pointer-events: all;
+  color: #2196f3;
+}
+
+.react-pdf__Page__annotations.annotationLayer a:hover {
+  color: #0d47a1;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

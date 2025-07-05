@@ -1,0 +1,15 @@
+{
+  "name": "Test JSON File",
+  "description": "A sample JSON file to test syntax highlighting",
+  "features": [
+    "syntax highlighting",
+    "code folding",
+    "preview"
+  ],
+  "nested": {
+    "key1": "value1",
+    "key2": 42,
+    "key3": true,
+    "array": [1, 2, 3, 4, 5]
+  }
+}

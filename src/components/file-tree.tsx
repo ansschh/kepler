@@ -4,14 +4,21 @@ import React, { useState, useCallback } from 'react';
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { ChevronRight, ChevronDown, FileText, Folder, PlusCircle, Upload, File } from 'lucide-react';
+import { ChevronRight, ChevronDown, FileText, Folder, PlusCircle, Upload, File, FolderOpen } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { useToast } from '@/components/ui/use-toast';
 
 export interface FileNode {
+  storage_path: any;
   id: string;
   name: string;
+  path: string;
   type: 'file' | 'directory';
   children?: FileNode[];
-  extension?: string; // Optional file extension
+  parent_id: string | null;
+  size_bytes?: number | null;
+  content_type?: string | null;
+  extension?: string | null;
 }
 
 interface FileNodeProps {
@@ -19,90 +26,166 @@ interface FileNodeProps {
   onFileSelect: (file: FileNode) => void;
   selectedFileId?: string;
   depth?: number;
+  onDrop?: (targetId: string, sourceId: string) => void;
+  onDragStart?: (file: FileNode) => void;
 }
 
 interface FileTreeProps {
   files: FileNode[];
-  onFileSelect?: (file: FileNode) => void;
-  onUploadClick?: (files?: FileList) => void;
-  onCreateFileClick?: () => void;
+  onFileSelect: (file: FileNode) => void;
   selectedFileId?: string;
+  onMoveFile?: (sourceId: string, targetId: string) => Promise<boolean>;
 }
 
-export function FileTree({ files, onFileSelect, onUploadClick, onCreateFileClick, selectedFileId }: FileTreeProps) {
-  // Pass the entire file node to the onFileSelect callback
-  const handleFileSelect = (file: FileNode) => {
-    if (onFileSelect) {
-      onFileSelect(file);
+export function FileTree({ files, onFileSelect, selectedFileId, onMoveFile }: FileTreeProps) {
+  const { toast } = useToast();
+  const [draggingFile, setDraggingFile] = useState<FileNode | null>(null);
+  
+  const handleDrop = async (targetId: string, sourceId: string) => {
+    if (onMoveFile) {
+      try {
+        // Show loading toast
+        toast({
+          title: "Moving file",
+          description: `Moving ${draggingFile?.name || 'file'}...`,
+        });
+        
+        const success = await onMoveFile(sourceId, targetId);
+        if (success) {
+          toast({
+            title: "Success",
+            description: `Moved ${draggingFile?.name || 'file'} successfully`,
+          });
+        } else {
+          toast({
+            title: "Error",
+            description: "Failed to move file",
+            variant: "destructive"
+          });
+        }
+      } catch (error) {
+        console.error('Error moving file:', error);
+        toast({
+          title: "Error",
+          description: `Failed to move file: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          variant: "destructive"
+        });
+      }
     }
   };
-
+  
+  const handleDragStart = (file: FileNode) => {
+    setDraggingFile(file);
+  };
+  
   return (
     <div className="space-y-1">
-      {files.map((file) => (
+      {files.map(file => (
         <FileNode 
           key={file.id} 
           file={file} 
-          onFileSelect={handleFileSelect} 
+          onFileSelect={onFileSelect}
           selectedFileId={selectedFileId}
+          onDrop={handleDrop}
+          onDragStart={handleDragStart}
         />
       ))}
     </div>
   );
 }
 
-// Component to render a single file node
-export function FileNode({ file, onFileSelect, selectedFileId, depth = 0 }: FileNodeProps) {
+export function FileNode({ file, onFileSelect, selectedFileId, depth = 0, onDrop, onDragStart }: FileNodeProps) {
   const [expanded, setExpanded] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const { toast } = useToast();
 
   const toggleExpand = useCallback(() => {
-    setExpanded(!expanded);
-  }, [expanded]);
+    if (file.type === 'directory') {
+      setExpanded(prev => !prev);
+    }
+  }, [file]);
 
-  const renderFileIcon = useCallback((node: FileNode) => {
-    if (node.type === 'directory') {
-      return <Folder className="h-4 w-4 text-blue-500" />;
+  // Determine file icon based on type or extension
+  const getFileIcon = () => {
+    if (file.type === 'directory') {
+      return expanded ? <FolderOpen className="h-4 w-4 mr-2" /> : <Folder className="h-4 w-4 mr-2" />;
+    } 
+    
+    if (file.extension === 'tex') {
+      return <FileText className="h-4 w-4 mr-2" />;
     }
     
-    // Determine icon based on file extension
-    switch(node.extension) {
-      case 'tex':
-      case 'latex':
-        return <FileText className="h-4 w-4 text-orange-500" />;
-      case 'pdf':
-        return <File className="h-4 w-4 text-red-500" />;
-      case 'bib':
-        return <FileText className="h-4 w-4 text-green-500" />;
-      case 'png':
-      case 'jpg':
-      case 'jpeg':
-        return <File className="h-4 w-4 text-purple-500" />;
-      default:
-        return <FileText className="h-4 w-4 text-gray-500" />;
+    return <File className="h-4 w-4 mr-2" />;
+  };
+  
+  // Drag and drop handlers
+  const handleDragStart = (e: React.DragEvent) => {
+    e.dataTransfer.setData('application/filenode', file.id);
+    e.dataTransfer.setData('text/plain', file.name);
+    e.dataTransfer.effectAllowed = 'move';
+    if (onDragStart) onDragStart(file);
+  };
+  
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Only allow drops on directories or the root level
+    if (file.type === 'directory') {
+      e.dataTransfer.dropEffect = 'move';
+      setIsDragOver(true);
     }
-  }, []);
+  };
+  
+  const handleDragLeave = () => {
+    setIsDragOver(false);
+  };
+  
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    
+    // Only allow drops on directories
+    if (file.type !== 'directory') return;
+    
+    const sourceId = e.dataTransfer.getData('application/filenode');
+    // Don't allow dropping onto itself or dropping a folder into its own child
+    if (sourceId && sourceId !== file.id && onDrop) {
+      onDrop(file.id, sourceId);
+    }
+  };
 
   return (
     <div>
       <div 
-        className={`flex items-center py-1 px-2 rounded-md ${file.id === selectedFileId ? 'bg-accent/50' : 'hover:bg-accent/20'} cursor-pointer`}
+        className={cn(
+          "flex items-center py-1 px-2 rounded-md", 
+          isDragOver ? "bg-blue-100" : "",
+          file.id === selectedFileId ? "bg-accent/50" : "hover:bg-accent/20",
+          "cursor-pointer"
+        )}
         style={{ paddingLeft: `${depth * 12 + 4}px` }}
         onClick={() => file.type === 'file' ? onFileSelect(file) : toggleExpand()}
+        draggable={true}
+        onDragStart={handleDragStart}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
       >
-        {file.type === 'directory' && (
-          <span className="mr-1" onClick={(e) => {
-            e.stopPropagation();
-            toggleExpand();
-          }}>
-            {expanded ? 
-              <ChevronDown className="h-4 w-4 text-muted-foreground" /> : 
-              <ChevronRight className="h-4 w-4 text-muted-foreground" />}
-          </span>
-        )}
-        <span className="mr-2">{renderFileIcon(file)}</span>
-        <span className="text-sm truncate">{file.name}</span>
+        {getFileIcon()}
+        <span className="text-sm">{file.name}</span>
       </div>
-
+      {file.type === 'directory' && expanded && file.children && file.children.map(child => (
+        <FileNode 
+          key={child.id} 
+          file={child} 
+          onFileSelect={onFileSelect} 
+          selectedFileId={selectedFileId}
+          depth={depth + 1}
+          onDrop={onDrop}
+          onDragStart={onDragStart}
+        />
+      ))}
       {file.type === 'directory' && expanded && file.children && (
         <div>
           {file.children.map(childNode => (

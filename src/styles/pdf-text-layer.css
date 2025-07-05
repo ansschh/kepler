@@ -1,0 +1,42 @@
+/**
+ * Local copy of react-pdf's TextLayer CSS
+ */
+
+.react-pdf__Page__textContent {
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  opacity: 0.2;
+  line-height: 1.0;
+}
+
+.react-pdf__Page__textContent span {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+
+.react-pdf__Page__textContent ::selection {
+  background: rgba(0, 0, 255, 0.3);
+}
+
+.react-pdf__Page__textContent .endOfContent {
+  display: block;
+  position: absolute;
+  left: 0;
+  top: 100%;
+  right: 0;
+  bottom: 0;
+  z-index: -1;
+  cursor: default;
+  user-select: none;
+}
+
+.react-pdf__Page__textContent .endOfContent.active {
+  top: 0;
+}
